@@ -25,10 +25,9 @@
 
 import UIKit
 import ObjectiveC
-
 /**
  Toast is a Swift extension that adds toast notifications to the `UIView` object class.
- It is intended to be simple, lightweight, and easy to use. Most toast notifications 
+ It is intended to be simple, lightweight, and easy to use. Most toast notifications
  can be triggered with a single line of code.
  
  The `makeToast` methods create a new view and then display it as toast.
@@ -106,9 +105,9 @@ public extension UIView {
      @param completion The completion closure, executed after the toast view disappears.
             didTap will be `true` if the toast view was dismissed from a tap.
      */
-    func makeToast(_ message: String?, duration: TimeInterval = ToastManager.shared.duration, position: ToastPosition = ToastManager.shared.position, title: String? = nil, image: UIImage? = nil, style: ToastStyle = ToastManager.shared.style, completion: ((_ didTap: Bool) -> Void)? = nil) {
+    func makeToast(_ message: String?, duration: TimeInterval = ToastManager.shared.duration, position: ToastPosition = ToastManager.shared.position, title: String? = nil, image: UIImage? = nil, style: ToastStyle = ToastManager.shared.style, action: ToastAction? = nil, completion: ((_ didTap: Bool) -> Void)? = nil) {
         do {
-            let toast = try toastViewForMessage(message, title: title, image: image, style: style)
+            let toast = try toastViewForMessage(message, title: title, image: image, duration: duration, style: style, action: action)
             showToast(toast, duration: duration, position: position, completion: completion)
         } catch ToastError.missingParameters {
             print("Error: message, title, and image are all nil")
@@ -127,9 +126,9 @@ public extension UIView {
      @param completion The completion closure, executed after the toast view disappears.
             didTap will be `true` if the toast view was dismissed from a tap.
      */
-    func makeToast(_ message: String?, duration: TimeInterval = ToastManager.shared.duration, point: CGPoint, title: String?, image: UIImage?, style: ToastStyle = ToastManager.shared.style, completion: ((_ didTap: Bool) -> Void)?) {
+    func makeToast(_ message: String?, duration: TimeInterval = ToastManager.shared.duration, point: CGPoint, title: String?, image: UIImage?, style: ToastStyle = ToastManager.shared.style, action: ToastAction? = nil, completion: ((_ didTap: Bool) -> Void)?) {
         do {
-            let toast = try toastViewForMessage(message, title: title, image: image, style: style)
+            let toast = try toastViewForMessage(message, title: title, image: image, duration: duration, style: style, action: action)
             showToast(toast, duration: duration, point: point, completion: completion)
         } catch ToastError.missingParameters {
             print("Error: message, title, and image cannot all be nil")
@@ -393,6 +392,12 @@ public extension UIView {
         hideToast(toast)
     }
     
+    @objc
+    private func performAction(_ action: () -> Void) {
+        // Call action block first
+        action()
+        hideToast()
+    }
     // MARK: - Toast Construction
     
     /**
@@ -411,7 +416,7 @@ public extension UIView {
      @throws `ToastError.missingParameters` when message, title, and image are all nil
      @return The newly created toast view
     */
-    func toastViewForMessage(_ message: String?, title: String?, image: UIImage?, style: ToastStyle) throws -> UIView {
+    func toastViewForMessage(_ message: String?, title: String?, image: UIImage?, duration: TimeInterval, style: ToastStyle, action: ToastAction?) throws -> UIView {
         // sanity
         guard message != nil || title != nil || image != nil else {
             throw ToastError.missingParameters
@@ -420,6 +425,7 @@ public extension UIView {
         var messageLabel: UILabel?
         var titleLabel: UILabel?
         var imageView: UIImageView?
+        var actionContainer: UIView?
         
         let wrapperView = UIView()
         wrapperView.backgroundColor = style.backgroundColor
@@ -447,6 +453,40 @@ public extension UIView {
             imageRect.size.width = imageView.bounds.size.width
             imageRect.size.height = imageView.bounds.size.height
         }
+            
+        var actionContainerRect = CGRect.zero
+        if let action = action {
+            actionContainer = UIView()
+            let actionButton = UIButton()
+            actionButton.setTitle(action.title, for: .normal)
+            actionButton.titleLabel?.font = style.messageFont
+            actionButton.titleLabel?.textColor = style.messageColor
+            actionButton.addAction {
+                action.handler()
+                self.hideToast()
+            }
+            
+            actionButton.sizeToFit()
+            
+            var progressBarRect = CGRect.zero
+            var progressBarMargin: CGFloat = 0
+
+            if action.showProgressBar {
+                progressBarMargin = style.progressBarHorizonalMargin
+                progressBarRect = CGRect(x: 0, y: (actionButton.frame.height - style.progressBarHeight) / 2, width: style.progressBarWidth, height: style.progressBarHeight)
+                let progressBar = CircularProgressBar(frame: progressBarRect)
+                progressBar.animate(duration: duration + style.fadeDuration)
+                actionContainer?.addSubview(progressBar)
+                
+                let actionButtonRect = actionButton.frame
+                actionButton.frame = CGRect(x: style.progressBarWidth + progressBarMargin, y: actionButtonRect.origin.y, width: actionButtonRect.size.width, height: actionButtonRect.size.height)
+            }
+
+  
+            actionContainerRect.size.width = progressBarRect.size.width + progressBarMargin + actionButton.frame.width
+            actionContainerRect.size.height = actionButton.frame.height
+            actionContainer?.addSubview(actionButton)
+        }
 
         if let title = title {
             titleLabel = UILabel()
@@ -458,7 +498,7 @@ public extension UIView {
             titleLabel?.backgroundColor = UIColor.clear
             titleLabel?.text = title;
             
-            let maxTitleSize = CGSize(width: (self.bounds.size.width * style.maxWidthPercentage) - imageRect.size.width, height: self.bounds.size.height * style.maxHeightPercentage)
+            let maxTitleSize = CGSize(width: (self.bounds.size.width * style.maxWidthPercentage) - imageRect.size.width - actionContainerRect.size.width, height: self.bounds.size.height * style.maxHeightPercentage)
             let titleSize = titleLabel?.sizeThatFits(maxTitleSize)
             if let titleSize = titleSize {
                 titleLabel?.frame = CGRect(x: 0.0, y: 0.0, width: titleSize.width, height: titleSize.height)
@@ -475,7 +515,7 @@ public extension UIView {
             messageLabel?.textColor = style.messageColor
             messageLabel?.backgroundColor = UIColor.clear
             
-            let maxMessageSize = CGSize(width: (self.bounds.size.width * style.maxWidthPercentage) - imageRect.size.width, height: self.bounds.size.height * style.maxHeightPercentage)
+            let maxMessageSize = CGSize(width: (self.bounds.size.width * style.maxWidthPercentage) - imageRect.size.width - actionContainerRect.size.width - 2 * style.horizontalPadding, height: self.bounds.size.height * style.maxHeightPercentage)
             let messageSize = messageLabel?.sizeThatFits(maxMessageSize)
             if let messageSize = messageSize {
                 let actualWidth = min(messageSize.width, maxMessageSize.width)
@@ -502,13 +542,21 @@ public extension UIView {
             messageRect.size.height = messageLabel.bounds.size.height
         }
         
+        
+        var actionButtonMargin: CGFloat = 0
+        if action != nil {
+            actionButtonMargin = style.actionButtonMargin
+            actionContainerRect.origin.x = messageRect.size.width + style.actionButtonMargin + style.horizontalPadding
+            let messageCenterY =  messageRect.origin.y + (messageRect.size.height / 2)
+            actionContainerRect.origin.y = max(0, messageCenterY - (actionContainerRect.size.height / 2))
+        }
+        
         let longerWidth = max(titleRect.size.width, messageRect.size.width)
         let longerX = max(titleRect.origin.x, messageRect.origin.x)
-        let wrapperWidth = max((imageRect.size.width + (style.horizontalPadding * 2.0)), (longerX + longerWidth + style.horizontalPadding))
+        let wrapperWidth = max((imageRect.size.width + (style.horizontalPadding * 2.0)), (longerX + longerWidth + actionButtonMargin + actionContainerRect.size.width + style.horizontalPadding))
         let wrapperHeight = max((messageRect.origin.y + messageRect.size.height + style.verticalPadding), (imageRect.size.height + (style.verticalPadding * 2.0)))
         
         wrapperView.frame = CGRect(x: 0.0, y: 0.0, width: wrapperWidth, height: wrapperHeight)
-        
         if let titleLabel = titleLabel {
             titleRect.size.width = longerWidth
             titleLabel.frame = titleRect
@@ -523,6 +571,11 @@ public extension UIView {
         
         if let imageView = imageView {
             wrapperView.addSubview(imageView)
+        }
+        
+        if let actionContainer = actionContainer {
+            actionContainer.frame = actionContainerRect
+            wrapperView.addSubview(actionContainer)
         }
         
         return wrapperView
@@ -688,6 +741,27 @@ public struct ToastStyle {
      */
     public var activityBackgroundColor: UIColor = UIColor.black.withAlphaComponent(0.8)
     
+    
+    /**
+     Margin from message to action button. Default is 32.
+     */
+    public var actionButtonMargin: CGFloat = 32
+    
+    /**
+     Width for circular progress bar. Default is 18.
+     */
+    public var progressBarWidth: CGFloat = 18
+    
+    /**
+     Height for circular progress bar. Default is 18.
+     */
+    public var progressBarHeight: CGFloat = 18
+    
+    /**
+     Margin from circular progress bar to action button. Default is 6.
+     */
+    public var progressBarHorizonalMargin: CGFloat = 6
+    
 }
 
 // MARK: - Toast Manager
@@ -745,6 +819,12 @@ public class ToastManager {
     
 }
 
+public struct ToastAction {
+    let title: String
+    let showProgressBar: Bool
+    let handler: () -> Void
+}
+
 // MARK: - ToastPosition
 
 public enum ToastPosition {
@@ -779,4 +859,17 @@ private extension UIView {
         }
     }
     
+}
+
+extension UIControl {
+    func addAction(for controlEvents: UIControl.Event = .touchUpInside, _ closure: @escaping()->()) {
+        @objc class ClosureSleeve: NSObject {
+            let closure:()->()
+            init(_ closure: @escaping()->()) { self.closure = closure }
+            @objc func invoke() { closure() }
+        }
+        let sleeve = ClosureSleeve(closure)
+        addTarget(sleeve, action: #selector(ClosureSleeve.invoke), for: controlEvents)
+        objc_setAssociatedObject(self, "\(UUID())", sleeve, objc_AssociationPolicy.OBJC_ASSOCIATION_RETAIN)
+    }
 }
